@@ -4,6 +4,7 @@
 // Generated with Bot Builder V4 SDK Template for Visual Studio CoreBot v4.3.0
 
 using System;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Bot.Builder;
@@ -11,6 +12,7 @@ using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Recognizers.Text.DataTypes.TimexExpression;
+using TourScannerBot.ApiManager;
 
 namespace TourScannerBot.Dialogs
 {
@@ -18,6 +20,8 @@ namespace TourScannerBot.Dialogs
     {
         protected readonly IConfiguration Configuration;
         protected readonly ILogger Logger;
+        private readonly HttpClient httpClient = new HttpClient();
+        private ICommonApiManager commonApiManager;
 
         public MainDialog(IConfiguration configuration, ILogger<MainDialog> logger)
             : base(nameof(MainDialog))
@@ -26,7 +30,7 @@ namespace TourScannerBot.Dialogs
             Logger = logger;
 
             AddDialog(new TextPrompt(nameof(TextPrompt)));
-            AddDialog(new BookingDialog());
+            AddDialog(new BookingDialog(configuration, httpClient));
             AddDialog(new WaterfallDialog(nameof(WaterfallDialog), new WaterfallStep[]
             {
                 IntroStepAsync,
@@ -72,9 +76,15 @@ namespace TourScannerBot.Dialogs
 
                 var dateTime = DateTime.Parse(result.TravelDate);
 
+                commonApiManager = new CommonApiManager(Configuration, httpClient, result);
+                var resultStringApi = await commonApiManager.MainFlow();
+
                 var resultString = string.Format("Tap on the url : {0}",
                  string.Format("https://tourscanner.co/s/{0}/?d={1}", string.Join("-", result.Destination.Split(" ")),
                  dateTime.ToString("dd-MM-yyyy")));
+
+                resultString += '\n';
+                resultString += resultStringApi;
 
                 await stepContext.Context.SendActivityAsync(MessageFactory.Text(resultString), cancellationToken);
             }

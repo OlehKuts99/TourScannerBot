@@ -4,17 +4,26 @@
 // Generated with Bot Builder V4 SDK Template for Visual Studio CoreBot v4.3.0
 
 using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Bot.Builder;
 using Microsoft.Bot.Builder.Dialogs;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Recognizers.Text.DataTypes.TimexExpression;
+using TourScannerBot.ApiManager.CityApi;
+using TourScannerBot.Models.CityApi;
 
 namespace TourScannerBot.Dialogs
 {
     public class BookingDialog : CancelAndHelpDialog
     {
-        public BookingDialog()
+        private readonly IConfiguration Configuration;
+        private readonly HttpClient httpClient;
+
+        public BookingDialog(IConfiguration configuration, HttpClient httpClient)
             : base(nameof(BookingDialog))
         {
             AddDialog(new TextPrompt(nameof(TextPrompt)));
@@ -23,6 +32,7 @@ namespace TourScannerBot.Dialogs
             AddDialog(new WaterfallDialog(nameof(WaterfallDialog), new WaterfallStep[]
             {
                 DestinationStepAsync,
+                DestinationConfirmStepAsync,
                 TravelDateStepAsync,
                 ConfirmStepAsync,
                 FinalStepAsync,
@@ -30,6 +40,8 @@ namespace TourScannerBot.Dialogs
 
             // The initial child Dialog to run.
             InitialDialogId = nameof(WaterfallDialog);
+            Configuration = configuration;
+            this.httpClient = httpClient;
         }
 
         private async Task<DialogTurnResult> DestinationStepAsync(WaterfallStepContext stepContext, CancellationToken cancellationToken)
@@ -46,11 +58,44 @@ namespace TourScannerBot.Dialogs
             }
         }
 
-        private async Task<DialogTurnResult> TravelDateStepAsync(WaterfallStepContext stepContext, CancellationToken cancellationToken)
+        private async Task<DialogTurnResult> DestinationConfirmStepAsync(WaterfallStepContext stepContext, CancellationToken cancellationToken)
         {
             var bookingDetails = (BookingDetails)stepContext.Options;
 
             bookingDetails.Destination = (string)stepContext.Result;
+
+            var cityApiManager = new CityApiManager(Configuration, httpClient);
+
+            var countryResponse = await cityApiManager.ExecuteGetRequest(bookingDetails.Destination);
+            var country = await countryResponse.Content.ReadAsAsync<CityModel>();
+
+            var countryList = country.Data;
+
+            if (countryList.Count > 1)
+            { 
+                return await stepContext.PromptAsync(nameof(TextPrompt), new PromptOptions
+                { Prompt = MessageFactory.Text("There are some variants, choose one :\n" + 
+                this.CreateList(countryList)) }, cancellationToken);
+            }
+            else
+            {
+                return await stepContext.NextAsync(bookingDetails.Destination, cancellationToken);
+            }
+        }
+
+        private async Task<DialogTurnResult> TravelDateStepAsync(WaterfallStepContext stepContext, CancellationToken cancellationToken)
+        {
+            var bookingDetails = (BookingDetails)stepContext.Options;
+
+            if (bookingDetails.Destination == null)
+            {
+                bookingDetails.Destination = (string)stepContext.Result;
+            }
+            else
+            {
+                bookingDetails.PossibleVariants = new List<string>();
+                bookingDetails.PossibleVariants.Add((string)stepContext.Result);
+            }
 
             if (bookingDetails.TravelDate == null || IsAmbiguous(bookingDetails.TravelDate))
             {
@@ -71,6 +116,8 @@ namespace TourScannerBot.Dialogs
             bookingDetails.TravelDate = dateTime.ToLongDateString();
 
             var msg = $"Please confirm, Your tour trip is to : {bookingDetails.Destination} on : {bookingDetails.TravelDate}";
+
+
 
             return await stepContext.PromptAsync(nameof(ConfirmPrompt), new PromptOptions { Prompt = MessageFactory.Text(msg) }, cancellationToken);
         }
@@ -93,6 +140,19 @@ namespace TourScannerBot.Dialogs
         {
             var timexProperty = new TimexProperty(timex);
             return !timexProperty.Types.Contains(Constants.TimexTypes.Definite);
+        }
+
+        private string CreateList(List<CityInfo> countryList)
+        {
+            StringBuilder sb = new StringBuilder();
+
+            for (int i = 0; i < countryList.Count; i++)
+            {
+                sb.Append((i + 1) + ". " + countryList[i].Country);
+                sb.Append("\n");
+            }
+
+            return sb.ToString();
         }
     }
 }
